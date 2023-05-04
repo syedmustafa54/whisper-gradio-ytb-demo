@@ -3,7 +3,7 @@
 Gradio demo for Whisper with some extra features added
 
 - List of youtbe videos links
-- output in a zip file for ach file in the srt file in the zip folder 
+- output in a zip file for each transcript file in the srt file in the zip folder 
 - name of the zip file is the title of the youtube video
 
 Host the demo on your local machine by running the following command:

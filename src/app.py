@@ -15,10 +15,17 @@ from transformers.pipelines.audio_utils import ffmpeg_read
 
 from whisper_jax import FlaxWhisperPipline
 
+import youtube_dl
+import subprocess
+import os
+import zipfile
+import tempfile
+
 
 cc.initialize_cache("./jax_cache")
 checkpoint = "openai/whisper-tiny"
 
+DEBUG = True
 BATCH_SIZE = 32
 CHUNK_LENGTH_S = 30
 NUM_PROC = 32
@@ -41,6 +48,46 @@ formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s", "%Y-%m-%d
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
+"""------------------------------------------------------------------------------------------------------------------"""
+
+def generate_srt_file(url, task, return_timestamps):
+    with youtube_dl.YoutubeDL({}) as ydl:
+        info = ydl.extract_info(url, download=False)
+        video_title = info['title']
+        video_id = info['id']
+    temp_dir = tempfile.mkdtemp()
+    video_file = os.path.join(temp_dir, video_id + '.mp4')
+    subprocess.run(['youtube-dl', url, '-f', 'bestaudio/best', '-o', video_file])
+    if task == 'translate':
+        subprocess.run(['whisper', '-f', 'srt', '-o', os.path.join(temp_dir, video_id + '.srt'),
+                        '-t', '-l', 'en', '-tl', 'es', video_file])
+    else:
+        subprocess.run(['whisper', '-f', 'srt', '-o', os.path.join(temp_dir, video_id + '.srt'),
+                        '-t', video_file])
+    if not return_timestamps:
+        with open(os.path.join(temp_dir, video_id + '.srt'), 'r') as f:
+            lines = f.readlines()
+        with open(os.path.join(temp_dir, video_id + '.srt'), 'w') as f:
+            for i, line in enumerate(lines):
+                if i % 4 != 2:
+                    f.write(line)
+    return os.path.join(temp_dir, video_id + '.srt')
+
+
+def get_video_title(url):
+    with youtube_dl.YoutubeDL({}) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info['title']
+
+
+def zip_srt_files(srt_files):
+    zip_file_name = srt_files[0][1] + '.zip'
+    with zipfile.ZipFile(zip_file_name, 'w') as zip_file:
+        for srt_file in srt_files:
+            zip_file.write(srt_file[0], arcname=srt_file[1] + '.srt')
+    return zip_file_name
+
+"""------------------------------------------------------------------------------------------------------------------"""
 
 def identity(batch):
     return batch
@@ -176,22 +223,15 @@ if __name__ == "__main__":
             except youtube_dl.utils.ExtractorError as err:
                 raise gr.Error(str(err))
 
-    def transcribe_youtube(yt_url, task, return_timestamps, progress=gr.Progress()):
-        progress(0, desc="Loading audio file...")
-        logger.info("loading youtube file...")
-        html_embed_str = _return_yt_html_embed(yt_url)
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            filepath = os.path.join(tmpdirname, "video.mp4")
-            download_yt_audio(yt_url, filepath)
-
-            with open(filepath, "rb") as f:
-                inputs = f.read()
-
-        inputs = ffmpeg_read(inputs, pipeline.feature_extractor.sampling_rate)
-        inputs = {"array": inputs, "sampling_rate": pipeline.feature_extractor.sampling_rate}
-        logger.info("done loading...")
-        text, runtime = tqdm_generate(inputs, task=task, return_timestamps=return_timestamps, progress=progress)
-        return html_embed_str, text, runtime
+    def transcribe_youtube(url_list, task, return_timestamps):
+        srt_files = []
+        for url in url_list:
+            # Transcribe the video and generate SRT file
+            srt_file = generate_srt_file(url, task, return_timestamps)
+            srt_files.append((srt_file, get_video_title(url)))
+        # Zip the SRT files and return the zip file name
+        zip_file = zip_srt_files(srt_files)
+        return zip_file
 
     microphone_chunked = gr.Interface(
         fn=transcribe_chunked_audio,
@@ -230,12 +270,13 @@ if __name__ == "__main__":
     youtube = gr.Interface(
         fn=transcribe_youtube,
         inputs=[
-            gr.inputs.Textbox(lines=1, placeholder="Paste the URL to a YouTube video here", label="YouTube URL"),
+            gr.inputs.Textbox(lines=5, placeholder="Paste the URLs of YouTube videos here, one per line", label="YouTube URLs"),
             gr.inputs.Radio(["transcribe", "translate"], label="Task", default="transcribe"),
             gr.inputs.Checkbox(default=False, label="Return timestamps"),
         ],
         outputs=[
             gr.outputs.HTML(label="Video"),
+            gr.outputs.File(llabel="Download transcripts"),
             gr.outputs.Textbox(label="Transcription").style(show_copy_button=True),
             gr.outputs.Textbox(label="Transcription Time (s)"),
         ],
@@ -253,4 +294,7 @@ if __name__ == "__main__":
         gr.TabbedInterface([microphone_chunked, audio_chunked, youtube], ["Microphone", "Audio File", "YouTube"])
 
     demo.queue(concurrency_count=1, max_size=5)
-    demo.launch(server_name="0.0.0.0", show_api=False)
+    if DEBUG:
+        demo.launch(server_name="0.0.0.0", show_api=False, share=True)
+    else:
+        demo.launch(server_name="0.0.0.0", show_api=False)
