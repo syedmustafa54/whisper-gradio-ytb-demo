@@ -20,7 +20,7 @@ import yt_dlp as youtube_dl
 # cc.initialize_cache("./jax_cache")
 # checkpoint = "openai/whisper-tiny"
 
-DEBUG = False
+DEBUG = True
 BATCH_SIZE = 32
 CHUNK_LENGTH_S = 30
 NUM_PROC = 32
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     #chunk_len = round(CHUNK_LENGTH_S * pipeline.feature_extractor.sampling_rate)
     #stride_left = stride_right = round(stride_length_s * pipeline.feature_extractor.sampling_rate)
     #step = chunk_len - stride_left - stride_right
-    pool = Pool(NUM_PROC)
+    #pool = Pool(NUM_PROC)
 
     # do a pre-compile step so that the first user to use the demo isn't hit with a long transcription time
     logger.info("compiling forward call...")
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         #dataloader = pipeline.preprocess_batch(inputs, chunk_length_s=CHUNK_LENGTH_S, batch_size=BATCH_SIZE)
         progress(0, desc="Pre-processing audio file...")
         logger.info("pre-processing audio file...")
-        dataloader = pool.map(identity, dataloader)
+        #dataloader = pool.map(identity, dataloader)
         logger.info("done post-processing")
 
         start_time = time.time()
