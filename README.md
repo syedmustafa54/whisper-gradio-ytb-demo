@@ -1,6 +1,8 @@
 # whisper-gradio-ytb-demo
 
-Gradio demo for Whisper with some extra features added
+Gradio demo for Whisper with some extra features added:
+
+<img src="https://github.com/gamingflexer/whisper-gradio-ytb-demo/blob/main/images/main.png" width="100" />
 
 - List of youtbe videos links
 - output in a zip file for each transcript file in the srt file in the zip folder 
