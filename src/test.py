@@ -2,6 +2,7 @@ import logging
 # import math
 import os
 import tempfile
+import zipfile
 import time
 from multiprocessing import Pool
 
@@ -56,6 +57,38 @@ ch.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s", "%Y-%m-%d %H:%M:%S")
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+def create_transcript_zip(videos,tmpdir):
+    """
+    Create a zip file for each video transcript and return the path to the zip of all transcripts.
+
+    Args:
+    videos (list of dict): Each dictionary must have "title" and "transcript" keys, containing the video title
+    and its transcript respectively.
+
+    Returns:
+    str: Path to the zip file containing all transcript zip files.
+    """
+    # Create a temporary directory to store all transcript zip files
+    zip_paths = []
+    # Loop through all videos and create a transcript zip file for each
+    for video in videos:
+        # Create a zip file with the video title as the filename
+        zip_path = os.path.join(tmpdir, f"{video['title']}.zip")
+        with zipfile.ZipFile(zip_path, "w") as zip_file:
+            # Write the transcript to an SRT file with the same name as the video
+            srt_path = os.path.join(tmpdir, f"{video['title']}.srt")
+            with open(srt_path, "w") as srt_file:
+                srt_file.write(video["transcript"])
+            # Add the SRT file to the zip
+            zip_file.write(srt_path, f"{video['title']}.srt")
+        zip_paths.append(zip_path)
+    # Create a zip file containing all transcript zip files
+    all_zip_path = os.path.join(tmpdir, "all_transcripts.zip")
+    with zipfile.ZipFile(all_zip_path, "w") as all_zip_file:
+        for zip_path in zip_paths:
+            all_zip_file.write(zip_path, os.path.basename(zip_path))
+    return all_zip_path
 
 
 def identity(batch):
@@ -194,21 +227,32 @@ if __name__ == "__main__":
             except youtube_dl.utils.ExtractorError as err:
                 raise gr.Error(str(err))
 
-    def transcribe_youtube(yt_url, task, return_timestamps, progress=gr.Progress()):
+def file_save(text, filename, dir_path):
+    
+
+
+    def transcribe_youtube(yt_urls, task, return_timestamps, progress=gr.Progress()):
+        final_files_data = []
+        yt_urls = yt_urls.split()
+        print(yt_urls,"yt_urls------>")
         html_embed_str = _return_yt_html_embed(yt_url)
         with tempfile.TemporaryDirectory() as tmpdirname:
-            #for yt_url in yt_urls:
-            filepath = os.path.join(tmpdirname, "video.mp4")
-            title_ytb = download_yt_audio(yt_url, filepath)
+            for yt_url in yt_urls:
+                filepath = os.path.join(tmpdirname, "video.mp4")
+                print(f"\n--Doing for {yt_urls.index(yt_url)}--{filepath}----\n")
+                title_ytb = download_yt_audio(yt_url, filepath)
 
-            with open(filepath, "rb") as f:
-                inputs = f.read()
+                with open(filepath, "rb") as f:
+                    inputs = f.read()
 
-            #inputs = ffmpeg_read(inputs, pipeline.feature_extractor.sampling_rate)
-            inputs = {"array": inputs, "sampling_rate": "pipeline.feature_extractor.sampling_rate"}
-            logger.info("done loading...")
-            text, runtime = tqdm_generate(inputs, task=task, return_timestamps=return_timestamps, progress=progress)
-        return html_embed_str, text, runtime, title_ytb
+                #inputs = ffmpeg_read(inputs, pipeline.feature_extractor.sampling_rate)
+                inputs = {"array": inputs, "sampling_rate": "pipeline.feature_extractor.sampling_rate"}
+                logger.info("done loading...")
+                text, runtime = tqdm_generate(inputs, task=task, return_timestamps=return_timestamps, progress=progress)
+                final_files_data.append({"title": title_ytb, "text": text})
+            path_of_zip_file = create_transcript_zip(final_files_data, tmpdirname)
+        text_done = "Transcription done"
+        return html_embed_str, path_of_zip_file, runtime
 
         
     microphone_chunked = gr.Interface(
