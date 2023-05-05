@@ -2,7 +2,9 @@ import logging
 import math
 import os
 import tempfile
+import zipfile
 import time
+import shutil
 from multiprocessing import Pool
 
 import gradio as gr
@@ -15,12 +17,6 @@ from transformers.pipelines.audio_utils import ffmpeg_read
 
 from whisper_jax import FlaxWhisperPipline
 
-import youtube_dl
-import subprocess
-import os
-import zipfile
-import tempfile
-
 
 cc.initialize_cache("./jax_cache")
 checkpoint = "openai/whisper-tiny"
@@ -32,11 +28,7 @@ NUM_PROC = 32
 FILE_LIMIT_MB = 1000
 YT_LENGTH_LIMIT_S = 7200  # limit to 2 hour YouTube files
 
-title = "Whisper JAX ⚡️ | OM"
-
-description = "Whisper JAX ⚡️ | OM"
-
-article = "Whisper JAX ⚡️ | OM"
+title = description = article = " Whisper JAX ⚡️ "
 
 language_names = sorted(TO_LANGUAGE_CODE.keys())
 
@@ -48,46 +40,8 @@ formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s", "%Y-%m-%d
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-"""------------------------------------------------------------------------------------------------------------------"""
+temp_path_zip_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp')
 
-def generate_srt_file(url, task, return_timestamps):
-    with youtube_dl.YoutubeDL({}) as ydl:
-        info = ydl.extract_info(url, download=False)
-        video_title = info['title']
-        video_id = info['id']
-    temp_dir = tempfile.mkdtemp()
-    video_file = os.path.join(temp_dir, video_id + '.mp4')
-    subprocess.run(['youtube-dl', url, '-f', 'bestaudio/best', '-o', video_file])
-    if task == 'translate':
-        subprocess.run(['whisper', '-f', 'srt', '-o', os.path.join(temp_dir, video_id + '.srt'),
-                        '-t', '-l', 'en', '-tl', 'es', video_file])
-    else:
-        subprocess.run(['whisper', '-f', 'srt', '-o', os.path.join(temp_dir, video_id + '.srt'),
-                        '-t', video_file])
-    if not return_timestamps:
-        with open(os.path.join(temp_dir, video_id + '.srt'), 'r') as f:
-            lines = f.readlines()
-        with open(os.path.join(temp_dir, video_id + '.srt'), 'w') as f:
-            for i, line in enumerate(lines):
-                if i % 4 != 2:
-                    f.write(line)
-    return os.path.join(temp_dir, video_id + '.srt')
-
-
-def get_video_title(url):
-    with youtube_dl.YoutubeDL({}) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return info['title']
-
-
-def zip_srt_files(srt_files):
-    zip_file_name = srt_files[0][1] + '.zip'
-    with zipfile.ZipFile(zip_file_name, 'w') as zip_file:
-        for srt_file in srt_files:
-            zip_file.write(srt_file[0], arcname=srt_file[1] + '.srt')
-    return zip_file_name
-
-"""------------------------------------------------------------------------------------------------------------------"""
 
 def identity(batch):
     return batch
@@ -120,13 +74,60 @@ if __name__ == "__main__":
     step = chunk_len - stride_left - stride_right
     pool = Pool(NUM_PROC)
 
-    # do a pre-compile step so that the first user to use the demo isn't hit with a long transcription time
+    #do a pre-compile step so that the first user to use the demo isn't hit with a long transcription time
     logger.info("compiling forward call...")
     start = time.time()
     random_inputs = {"input_features": np.ones((BATCH_SIZE, 80, 3000))}
     random_timestamps = pipeline.forward(random_inputs, batch_size=BATCH_SIZE, return_timestamps=True)
     compile_time = time.time() - start
     logger.info(f"compiled in {compile_time}s")
+
+    def create_transcript_zip(videos,tmpdir):
+        """
+      Clear the temporary directory contents
+      
+      Create a zip file for each video transcript and return the path to the zip of all transcripts.
+
+      Args:
+      videos (list of dict): Each dictionary must have "title" and "transcript" keys, containing the video title
+      and its transcript respectively.
+
+      Returns:
+      str: Path to the zip file containing all transcript zip files.
+      """
+        for filename in os.listdir(tmpdir):
+            file_path = os.path.join(tmpdir, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+                print(f'Deleted {file_path}')
+            except Exception as e:
+                print(f'Failed to delete {file_path}. Reason: {e}')
+
+        # Create a temporary directory to store all transcript zip files
+        zip_paths = []
+        # Loop through all videos and create a transcript zip file for each
+        for video in videos:
+            # Create a zip file with the video title as the filename
+            zip_path = os.path.join(tmpdir, f"{video['title']}.zip")
+            if not os.path.exists(temp_path_zip_file):
+              os.makedirs(temp_path_zip_file)
+            with zipfile.ZipFile(zip_path, "w") as zip_file:
+                # Write the transcript to an SRT file with the same name as the video
+                srt_path = os.path.join(tmpdir, f"{video['title']}.srt")
+                with open(srt_path, "w") as srt_file:
+                    srt_file.write(video["transcript"])
+                # Add the SRT file to the zip
+                zip_file.write(srt_path, f"{video['title']}.srt")
+            zip_paths.append(zip_path)
+        # Create a zip file containing all transcript zip files
+        all_zip_path = os.path.join(tmpdir, "all_transcripts.zip")
+        with zipfile.ZipFile(all_zip_path, "w") as all_zip_file:
+            for zip_path in zip_paths:
+                all_zip_file.write(zip_path, os.path.basename(zip_path))
+        return all_zip_path
 
     def tqdm_generate(inputs: dict, task: str, return_timestamps: bool, progress: gr.Progress):
         inputs_len = inputs["array"].shape[0]
@@ -158,7 +159,7 @@ if __name__ == "__main__":
 
         logger.info("post-processing...")
         post_processed = pipeline.postprocess(model_outputs, return_timestamps=True)
-        text = post_processed["text"]
+        text = "sample text"
         if return_timestamps:
             timestamps = post_processed.get("chunks")
             timestamps = [
@@ -192,10 +193,11 @@ if __name__ == "__main__":
         return text, runtime
 
     def _return_yt_html_embed(yt_url):
-        video_id = yt_url.split("?v=")[-1]
+        video_id = yt_url[-1].split("?v=")[-1]
         return f'<center> <iframe width="500" height="320" src="https://www.youtube.com/embed/{video_id}"> </iframe> </center>'
 
     def download_yt_audio(yt_url, filename):
+        title_ytb = youtube_dl.YoutubeDL().extract_info(yt_url, download=False).get("title", None)
         info_loader = youtube_dl.YoutubeDL()
         try:
             info = info_loader.extract_info(yt_url, download=False)
@@ -220,19 +222,32 @@ if __name__ == "__main__":
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             try:
                 ydl.download([yt_url])
+                return title_ytb
             except youtube_dl.utils.ExtractorError as err:
-                raise gr.Error(str(err))
+                raise gr.Error(str(err))    
 
-    def transcribe_youtube(url_list, task, return_timestamps):
-        srt_files = []
-        for url in url_list:
-            # Transcribe the video and generate SRT file
-            srt_file = generate_srt_file(url, task, return_timestamps)
-            srt_files.append((srt_file, get_video_title(url)))
-        # Zip the SRT files and return the zip file name
-        zip_file = zip_srt_files(srt_files)
-        return zip_file
+    def transcribe_youtube(yt_urls, task, return_timestamps, progress=gr.Progress()):
+        final_files_data = []
+        yt_urls = yt_urls.split()
+        html_embed_str = _return_yt_html_embed(yt_urls)
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            for yt_url in yt_urls:
+                filepath = os.path.join(tmpdirname, "video.mp4")
+                print(f"\n--Doing for {yt_urls.index(yt_url)}--{filepath}----\n")
+                title_ytb = download_yt_audio(yt_url, filepath)
 
+                with open(filepath, "rb") as f:
+                    inputs = f.read()
+
+                inputs = ffmpeg_read(inputs, pipeline.feature_extractor.sampling_rate)
+                inputs = {"array": inputs, "sampling_rate": "pipeline.feature_extractor.sampling_rate"}
+                logger.info("done loading...")
+                text, runtime = tqdm_generate(inputs, task=task, return_timestamps=return_timestamps, progress=progress)
+                final_files_data.append({"title": title_ytb, "transcript": text})
+        path_of_zip_file = create_transcript_zip(final_files_data, temp_path_zip_file)
+        return html_embed_str, path_of_zip_file, runtime
+
+        
     microphone_chunked = gr.Interface(
         fn=transcribe_chunked_audio,
         inputs=[
@@ -276,13 +291,11 @@ if __name__ == "__main__":
         ],
         outputs=[
             gr.outputs.HTML(label="Video"),
-            gr.outputs.File(llabel="Download transcripts"),
-            gr.outputs.Textbox(label="Transcription").style(show_copy_button=True),
+            gr.outputs.File(label="Download files here"),
             gr.outputs.Textbox(label="Transcription Time (s)"),
         ],
         allow_flagging="never",
         title=title,
-        examples=[["https://www.youtube.com/watch?v=m8u-18Q0s7I", "transcribe", False]],
         cache_examples=False,
         description=description,
         article=article,
