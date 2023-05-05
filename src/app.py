@@ -21,11 +21,11 @@ from whisper_jax import FlaxWhisperPipline
 cc.initialize_cache("./jax_cache")
 checkpoint = "openai/whisper-tiny"
 
-DEBUG = True
+DEBUG = False
 BATCH_SIZE = 32
 CHUNK_LENGTH_S = 30
 NUM_PROC = 32
-FILE_LIMIT_MB = 1000
+FILE_LIMIT_MB = 100000
 YT_LENGTH_LIMIT_S = 7200  # limit to 2 hour YouTube files
 
 title = description = article = " Whisper JAX ⚡️ "
@@ -159,7 +159,6 @@ if __name__ == "__main__":
 
         logger.info("post-processing...")
         post_processed = pipeline.postprocess(model_outputs, return_timestamps=True)
-        text = "sample text"
         if return_timestamps:
             timestamps = post_processed.get("chunks")
             timestamps = [
@@ -240,7 +239,7 @@ if __name__ == "__main__":
                     inputs = f.read()
 
                 inputs = ffmpeg_read(inputs, pipeline.feature_extractor.sampling_rate)
-                inputs = {"array": inputs, "sampling_rate": "pipeline.feature_extractor.sampling_rate"}
+                inputs = {"array": inputs, "sampling_rate": pipeline.feature_extractor.sampling_rate}
                 logger.info("done loading...")
                 text, runtime = tqdm_generate(inputs, task=task, return_timestamps=return_timestamps, progress=progress)
                 final_files_data.append({"title": title_ytb, "transcript": text})
