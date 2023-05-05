@@ -1,3 +1,4 @@
+import uuid
 import logging
 import math
 import os
@@ -26,7 +27,7 @@ BATCH_SIZE = 32
 CHUNK_LENGTH_S = 30
 NUM_PROC = 32
 FILE_LIMIT_MB = 100000
-YT_LENGTH_LIMIT_S = 7200  # limit to 2 hour YouTube files
+YT_LENGTH_LIMIT_S = 72000  # limit to 2 hour YouTube files
 
 title = description = article = " Whisper JAX ⚡️ "
 
@@ -159,6 +160,7 @@ if __name__ == "__main__":
 
         logger.info("post-processing...")
         post_processed = pipeline.postprocess(model_outputs, return_timestamps=True)
+        text = post_processed["text"]
         if return_timestamps:
             timestamps = post_processed.get("chunks")
             timestamps = [
@@ -231,10 +233,10 @@ if __name__ == "__main__":
         html_embed_str = _return_yt_html_embed(yt_urls)
         with tempfile.TemporaryDirectory() as tmpdirname:
             for yt_url in yt_urls:
-                filepath = os.path.join(tmpdirname, "video.mp4")
+                ran_id = str(uuid.uuid4())
+                filepath = os.path.join(tmpdirname, f"{ran_id}_video.mp4")
                 print(f"\n--Doing for {yt_urls.index(yt_url)}--{filepath}----\n")
                 title_ytb = download_yt_audio(yt_url, filepath)
-
                 with open(filepath, "rb") as f:
                     inputs = f.read()
 
@@ -243,6 +245,7 @@ if __name__ == "__main__":
                 logger.info("done loading...")
                 text, runtime = tqdm_generate(inputs, task=task, return_timestamps=return_timestamps, progress=progress)
                 final_files_data.append({"title": title_ytb, "transcript": text})
+#        print(final_files_data)
         path_of_zip_file = create_transcript_zip(final_files_data, temp_path_zip_file)
         return html_embed_str, path_of_zip_file, runtime
 
